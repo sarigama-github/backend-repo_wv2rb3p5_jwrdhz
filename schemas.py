@@ -1,48 +1,90 @@
 """
-Database Schemas
+Team Logger Schemas
 
-Define your MongoDB collection schemas here using Pydantic models.
-These schemas are used for data validation in your application.
+Each Pydantic model represents a collection in MongoDB.
+Collection name is the lowercase class name, e.g. User -> "user".
 
-Each Pydantic model represents a collection in your database.
-Model name is converted to lowercase for the collection name:
-- User -> "user" collection
-- Product -> "product" collection
-- BlogPost -> "blogs" collection
+Age and privacy policy
+- Base private journal threshold is 15+
+- Children 12–14 may request private journal access from Team Leader
+These are defaults and can be overridden per-team via settings.
 """
+from __future__ import annotations
+from typing import List, Optional, Literal, Dict, Any
+from pydantic import BaseModel, Field, EmailStr
+from datetime import datetime
 
-from pydantic import BaseModel, Field
-from typing import Optional
+# ---------- Core ----------
 
-# Example schemas (replace with your own):
+class TeamSettings(BaseModel):
+    private_journal_age: int = Field(15, ge=0, le=120)
+    request_private_from_age: int = Field(12, ge=0, le=120)
+    locale: str = Field("en", description="Default locale for the team")
+    theme_default: Literal["family", "neutral"] = Field("family")
+
+class Team(BaseModel):
+    name: str
+    leader_id: str = Field(..., description="User _id of the team leader")
+    member_ids: List[str] = Field(default_factory=list)
+    invites: List[str] = Field(default_factory=list, description="Pending invite emails")
+    settings: TeamSettings = Field(default_factory=TeamSettings)
+    subscription_tier: Literal["starter", "pro", "business"] = Field("starter")
+
+class UserDevice(BaseModel):
+    platform: Optional[str] = None
+    push_token: Optional[str] = None
+    last_active_at: Optional[datetime] = None
 
 class User(BaseModel):
-    """
-    Users collection schema
-    Collection name: "user" (lowercase of class name)
-    """
-    name: str = Field(..., description="Full name")
-    email: str = Field(..., description="Email address")
-    address: str = Field(..., description="Address")
-    age: Optional[int] = Field(None, ge=0, le=120, description="Age in years")
-    is_active: bool = Field(True, description="Whether user is active")
+    email: EmailStr
+    name: str
+    password_hash: str
+    age: Optional[int] = Field(None, ge=0, le=120)
+    roles: Dict[str, Literal["leader", "adult", "young_adult", "teen", "kid"]] = Field(
+        default_factory=dict, description="team_id -> role"
+    )
+    devices: List[UserDevice] = Field(default_factory=list)
+    theme_preference: Literal["family", "neutral"] = Field("family")
 
-class Product(BaseModel):
-    """
-    Products collection schema
-    Collection name: "product" (lowercase of class name)
-    """
-    title: str = Field(..., description="Product title")
-    description: Optional[str] = Field(None, description="Product description")
-    price: float = Field(..., ge=0, description="Price in dollars")
-    category: str = Field(..., description="Product category")
-    in_stock: bool = Field(True, description="Whether product is in stock")
+# ---------- Records ----------
 
-# Add your own schemas here:
-# --------------------------------------------------
+class Record(BaseModel):
+    team_id: str
+    author_id: str
+    type: Literal["log", "journal"]
+    content: str
+    tags: List[str] = Field(default_factory=list)
+    is_private: bool = False
+    edited_at: Optional[datetime] = None
+    deleted_at: Optional[datetime] = None
+    purge_at: Optional[datetime] = None
 
-# Note: The Flames database viewer will automatically:
-# 1. Read these schemas from GET /schema endpoint
-# 2. Use them for document validation when creating/editing
-# 3. Handle all database operations (CRUD) directly
-# 4. You don't need to create any database endpoints!
+class LogEntry(Record):
+    type: Literal["log"] = "log"
+    occurred_at: Optional[datetime] = None
+
+class JournalEntry(Record):
+    type: Literal["journal"] = "journal"
+    title: Optional[str] = None
+
+# ---------- Reminders ----------
+
+class Reminder(BaseModel):
+    team_id: str
+    creator_id: str
+    title: str
+    notes: Optional[str] = None
+    schedule_iso: str = Field(..., description="RFC3339/ISO8601 date or RRULE string")
+    recipient_ids: List[str] = Field(default_factory=list)
+    send_push: bool = True
+
+# ---------- Sticky Notes (later phase; schema stub for future) ----------
+
+class StickyNote(BaseModel):
+    team_id: str
+    creator_id: str
+    text: str = Field(..., max_length=240)
+    recipient_ids: List[str] = Field(default_factory=list)
+    pop_on_open: bool = True
+    send_push: bool = False
+
